@@ -1,0 +1,34 @@
+#!/bin/bash
+set -e
+
+# Implementation note: 'tee' is used as a sudo-friendly 'cat' to populate a file with the contents provided below.
+
+sudo -n tee /etc/conjur.conf > /dev/null << CONJUR_CONF
+account: <%= Conjur.configuration.account %>
+appliance_url: <%= Conjur.configuration.appliance_url %>
+cert_file: /etc/conjur.pem
+netrc_path: /etc/conjur.identity
+plugins: []
+CONJUR_CONF
+
+sudo -n tee /etc/conjur.pem > /dev/null << CONJUR_CERT
+<%= options[:ssl_cert].chop %>
+CONJUR_CERT
+
+sudo apt-get update
+sudo apt-get install -y awscli
+
+aws s3api get-object --bucket <%= options[:bucket] %> --key <%= options[:role] %> /tmp/hftoken
+
+token=`cat /tmp/hftoken`
+rm /tmp/hftoken
+
+identity=`sudo curl --cacert /etc/conjur.pem \
+	-H "Authorization: Token token=\"$token\"" \
+	-X POST <%= Conjur.configuration.appliance_url %>/host_factories/hosts?id=<%= options[:host_id] %>`
+
+curl https://s3.amazonaws.com/conjur-releases/omnibus/conjur_4.28.0-1_amd64.deb -o /tmp/conjur-cli.deb
+sudo dpkg -i /tmp/conjur-cli.deb
+rm /tmp/conjur-cli.deb
+
+echo $identity | conjurize --ssh --sudo | sh
